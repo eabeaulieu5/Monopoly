@@ -12,8 +12,8 @@ from monopoly.constants import EntryType
 from monopoly.identifiers import IdentifierGroup, TextIdentifier
 
 
-class Cibc(BankBase):
-    name = "cibc"
+class Desjardins(BankBase):
+    name = "desjardins"
 
     pdf_config: PdfConfig = PdfConfig(
         page_range=(0, None),
@@ -22,32 +22,32 @@ class Cibc(BankBase):
 
     identifiers: ClassVar[list[IdentifierGroup]] = [
         [
-            TextIdentifier(text="CIBC"),
+            TextIdentifier(text="Desjardins"),
         ]
     ]
 
     credit_statement: ClassVar[StatementConfig] = StatementConfig(
         statement_type=EntryType.CREDIT,
         header_pattern=re.compile(
-            r"(?:Vos nouveaux frais et crédits|Date\s+Date\s+de l’opér\.|Détails des opérations)",
-            re.IGNORECASE,
+            r"(?:Date de transaction\s+Date d'inscription|SOMMAIRE DES TRANSACTIONS COURANTES)"
         ),
         statement_date_pattern=re.compile(
-            r"(?:Date du relevé\s*\n\s*|au\s+)(?P<statement_date>\d{1,2}\s+[a-zéû.-]+\s+\d{4})",
+            r"(?:Période couverte|Date du relevé|Date)\s*[:\s]*(?P<statement_date>\d{1,2}\s+[a-zéû.-]+\s+\d{4})",
             re.IGNORECASE,
         ),
         statement_date_order=DateOrder("DMY"),
-        transaction_date_order=DateOrder("MDY"),
+        transaction_date_order=DateOrder("DMY"),
         transaction_pattern=re.compile(
-            r"^\s*(?:Ý\s*)?(?P<transaction_date>[a-zéû.-]+\s+\d{1,2})\s+"
-            r"[a-zéû.-]+\s+\d{1,2}\s+"
+            r"^\s*(?P<transaction_date>\d{2}\s+\d{2})\s+"
+            r"\d{2}\s+\d{2}\s+"
             r"(?P<description>.+?)\s+"
-            r"(?P<amount>-?\d[\d\s]*[.,]\d{2})\s*$",
+            r"(?:(?:\d+[,.]\d{2}\s*%\s+)|\s+)"
+            r"(?P<amount>\d[\d\s]*[.,]\d{2})(?P<polarity>CR)?\s*$",
             re.IGNORECASE,
         ),
         transaction_auto_polarity=True,
         safety_check=False,
-        filename_fallback_pattern=re.compile(r"onlineStatement_(\d{4}-\d{2}-\d{2})\.pdf$"),
+        filename_fallback_pattern=re.compile(r"-([A-Za-z]+)-(\d{4})\.pdf$"),
     )
 
     statement_configs: ClassVar[list[StatementConfig]] = [credit_statement]

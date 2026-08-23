@@ -1,53 +1,12 @@
-import logging
+# Copyright (c) 2024 Benjamin AWD
+#
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
 
-from .amex import Amex
-from .bank_of_america import BankOfAmerica
-from .base import BankBase
-from .bmo import BankOfMontreal
-from .canadian_tire import CanadianTire
-from .capitalone import CapitalOneCanada
-from .chase import Chase
-from .cibc import CIBC
-from .citibank import Citibank
-from .dbs import Dbs
-from .detector import BankDetector
-from .hsbc import Hsbc
-from .maybank import Maybank
-from .ocbc import Ocbc
-from .rbc import RoyalBankOfCanada
-from .schwab_bank import Schwab
-from .scotiabank import Scotiabank
-from .standard_chartered import StandardChartered
-from .td_canada_trust import TDCanadaTrust
-from .trust import Trust
-from .uob import Uob
-from .usbank import UsBank
-from .zkb import ZurcherKantonalBank
+from .cibc import Cibc
+from .desjardins import Desjardins
 
-banks: list[type[BankBase]] = [
-    Amex,
-    BankOfAmerica,
-    BankOfMontreal,
-    CanadianTire,
-    CapitalOneCanada,
-    Chase,
-    CIBC,
-    Citibank,
-    Dbs,
-    Hsbc,
-    Maybank,
-    Ocbc,
-    RoyalBankOfCanada,
-    Schwab,
-    Scotiabank,
-    StandardChartered,
-    TDCanadaTrust,
-    Trust,
-    Uob,
-    UsBank,
-    ZurcherKantonalBank,
+__all__ = [
+    "Cibc",
+    "Desjardins",
 ]
-
-logger = logging.getLogger(__name__)
-
-__all__ = ["BankDetector", "BankBase"] + [bank.__name__ for bank in banks]

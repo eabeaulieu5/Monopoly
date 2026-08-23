@@ -23,3 +23,16 @@ dist
 !**/examples/*.pdf
 
 .claude
+# Données et exports financiers
+*.csv
+*.pdf
+*_statements/
+releves_*/
+
+# Scripts d'export locaux
+export_*.py
+merge_transactions.py
+
+# Caches Python
+__pycache__/
+*.pyc

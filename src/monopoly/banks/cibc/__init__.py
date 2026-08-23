@@ -1,3 +1,8 @@
-from .cibc import CIBC
+# Copyright (c) 2024 Benjamin AWD
+#
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
 
-__all__ = ["CIBC"]
+from .cibc import Cibc
+
+__all__ = ["Cibc"]
