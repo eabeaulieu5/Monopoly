@@ -7,6 +7,8 @@ __pycache__/
 monopoly_env/
 
 # Données personnelles et sorties
+data/
+output/
 *.pdf
 *.csv
 *.png
