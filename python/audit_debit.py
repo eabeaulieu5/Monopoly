@@ -1,51 +1,46 @@
-import pandas as pd
+# Copyright (c) 2026 Elee Beaulieu. All rights reserved.
+
+"""Script d'audit et de validation des transactions de débit Desjardins."""
+
+import logging
 from pathlib import Path
+import sys
 
-FILE = Path("desjardins_debit_transactions.csv")
+import pandas as pd
 
-if not FILE.exists():
-    print(f"[!] Fichier introuvable : {FILE}. Exécutez d'abord python export_desjardins_debit.py")
-    exit()
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
 
-df = pd.read_csv(FILE)
-df["date"] = pd.to_datetime(df["date"])
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CSV_PATH = REPO_ROOT / "data" / "desjardins_debit_transactions.csv"
 
-print("=" * 60)
-print(f"RAPPORT D'AUDIT : {len(df)} transactions débit détectées")
-print(f"Période couverte : du {df['date'].min().strftime('%Y-%m-%d')} au {df['date'].max().strftime('%Y-%m-%d')}")
-print("=" * 60)
+if not CSV_PATH.exists():
+    CSV_PATH = REPO_ROOT / "desjardins_debit_transactions.csv"
 
-# 1. Distribution par section de compte
-print("\n[1] Répartition par sous-compte :")
-account_summary = df.groupby("account_section").agg(
-    total_tx=("amount", "count"),
-    total_depenses=("amount", lambda x: x[x < 0].sum()),
-    total_depots=("amount", lambda x: x[x > 0].sum()),
-    net=("amount", "sum")
-).reset_index()
+if not CSV_PATH.exists():
+    logger.error("[!] Fichier introuvable : %s", CSV_PATH)
+    sys.exit(1)
 
-for _, row in account_summary.iterrows():
-    print(f" • {row['account_section'][:45]:<45} | {row['total_tx']:>4} tx | Sorties: {row['total_depenses']:>10.2f} $ | Entrées: {row['total_depots']:>10.2f} $")
+df = pd.read_csv(CSV_PATH)
 
-# 2. Répartition par code d'opération
-print("\n[2] Top 8 des types d'opérations (Codes) :")
-top_codes = df["code"].value_counts().head(8)
-for code, count in top_codes.items():
-    print(f" • {code:<6} : {count:>4} transactions")
+logger.info("=" * 60)
+logger.info("AUDIT DESJARDINS DÉBIT : %s transactions", f"{len(df):,}")
+logger.info("=" * 60)
 
-# 3. Vérification des anomalies / valeurs nulles
-print("\n[3] Contrôle qualité des données :")
-nulls = df.isnull().sum()
-has_null = nulls.any()
-if has_null:
-    print(f" [!] Colonnes avec valeurs manquantes :\n{nulls[nulls > 0]}")
+# 1. Vérification des montants manquants (PD003: isna préféré à isnull)
+null_amounts = df[df["amount"].isna()]
+if not null_amounts.empty:
+    logger.warning("[!] Montants manquants détectés : %d", len(null_amounts))
 else:
-    print(" [✓] Aucune valeur manquante (NaN) détectée.")
+    logger.info("[✓] Aucun montant manquant.")
 
-zero_amounts = df[df["amount"] == 0]
-if len(zero_amounts) > 0:
-    print(f" [!] {len(zero_amounts)} transaction(s) avec un montant de 0.00 $ trouvée(s).")
-else:
-    print(" [✓] Tous les montants extraits sont non nuls.")
+# 2. Répartition par sous-compte
+logger.info("\n--- Répartition par sous-compte ---")
+logger.info("%s", df["account_section"].value_counts().to_string())
 
-print("=" * 60)
+# 3. Somme globale des flux
+total_depenses = df[df["amount"] < 0]["amount"].sum()
+total_entrees = df[df["amount"] > 0]["amount"].sum()
+logger.info("\n--- Flux totaux ---")
+logger.info("Sorties : %s $", f"{total_depenses:,.2f}")
+logger.info("Entrées : %s $", f"{total_entrees:,.2f}")
