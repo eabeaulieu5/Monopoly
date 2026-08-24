@@ -1,72 +1,91 @@
-import pandas as pd
+# Copyright (c) 2026 Elee Beaulieu. All rights reserved.
+
+"""Module de consolidation et d'harmonisation du Master Ledger bancaire."""
+
+import logging
 from pathlib import Path
+import sys
 
-files = {
-    "desjardins_credit": Path("desjardins_transactions.csv"),
-    "cibc_credit": Path("cibc_transactions.csv"),
-    "desjardins_debit": Path("desjardins_debit_transactions.csv")
-}
+import pandas as pd
 
-dfs = []
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
 
-# 1. Chargement Crédit Desjardins
-if files["desjardins_credit"].exists():
-    df_dc = pd.read_csv(files["desjardins_credit"])
-    df_dc["institution"] = "Desjardins"
-    df_dc["account_type"] = "Credit"
-    if "account_section" not in df_dc.columns:
-        df_dc["account_section"] = "Carte de crédit"
-    dfs.append(df_dc)
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+DATA_DIR = REPO_ROOT / "data"
+DATA_DIR.mkdir(exist_ok=True)
 
-# 2. Chargement Crédit CIBC
-if files["cibc_credit"].exists():
-    df_cc = pd.read_csv(files["cibc_credit"])
-    df_cc["institution"] = "CIBC"
-    df_cc["account_type"] = "Credit"
-    if "account_section" not in df_cc.columns:
-        df_cc["account_section"] = "Costco Mastercard"
-    dfs.append(df_cc)
+MASTER_OUTPUT = DATA_DIR / "all_transactions.csv"
 
-# 3. Chargement Débit Desjardins
-if files["desjardins_debit"].exists():
-    df_dd = pd.read_csv(files["desjardins_debit"])
-    df_dd["institution"] = "Desjardins"
-    df_dd["account_type"] = "Debit/Banking"
-    dfs.append(df_dd)
 
-if not dfs:
-    print("[!] Aucun fichier CSV source trouvé.")
-    exit()
+def load_and_standardize() -> pd.DataFrame | None:
+    """Charge, aligne les schémas et fusionne toutes les sources bancaires."""
+    dfs: list[pd.DataFrame] = []
 
-# 4. Fusion et standardisation
-df_all = pd.concat(dfs, ignore_index=True)
+    sources = {
+        "desjardins_credit": [
+            DATA_DIR / "desjardins_transactions.csv",
+            REPO_ROOT / "desjardins_transactions.csv",
+        ],
+        "cibc_credit": [
+            DATA_DIR / "cibc_transactions.csv",
+            REPO_ROOT / "cibc_transactions.csv",
+        ],
+        "desjardins_debit": [
+            DATA_DIR / "desjardins_debit_transactions.csv",
+            REPO_ROOT / "desjardins_debit_transactions.csv",
+        ],
+    }
 
-# Nettoyage des montants à 0.00 $ et conversion des dates
-df_all = df_all[df_all["amount"] != 0.0].copy()
-df_all["date"] = pd.to_datetime(df_all["date"])
-df_all["statement_date"] = pd.to_datetime(df_all["statement_date"])
+    found_files: list[Path] = []
+    for _name, paths in sources.items():
+        for path in paths:
+            if path.exists():
+                found_files.append(path)
+                break
 
-# Colonnes finales ordonnées
-cols = [
-    "date",
-    "institution",
-    "account_type",
-    "account_section",
-    "description",
-    "amount",
-    "code",
-    "statement_date",
-    "source_file"
-]
-for col in cols:
-    if col not in df_all.columns:
-        df_all[col] = None
+    if not found_files:
+        logger.error("[!] Aucun fichier source trouvé dans %s ou %s", DATA_DIR, REPO_ROOT)
+        return None
 
-df_all = df_all[cols].sort_values(by=["date", "institution", "account_type"], ascending=True)
+    cols_required = [
+        "date",
+        "institution",
+        "account_type",
+        "account_section",
+        "description",
+        "amount",
+    ]
 
-output_path = Path("all_transactions.csv")
-df_all.to_csv(output_path, index=False, encoding="utf-8")
+    for file_path in found_files:
+        logger.info("[+] Chargement de : %s", file_path.name)
+        df = pd.read_csv(file_path)
 
-print(f"[✓] Fichier unifié généré : {output_path.name}")
-print(f"Total de transactions valides : {len(df_all)}")
-print(f"Période couverte : du {df_all['date'].min().strftime('%Y-%m-%d')} au {df_all['date'].max().strftime('%Y-%m-%d')}")
+        for col in cols_required:
+            if col not in df.columns:
+                df[col] = None
+
+        if "code" not in df.columns:
+            df["code"] = None
+        if "statement_date" not in df.columns:
+            df["statement_date"] = None
+        if "source_file" not in df.columns:
+            df["source_file"] = file_path.name
+
+        dfs.append(df)
+
+    master_df = pd.concat(dfs, ignore_index=True)
+    master_df["date"] = pd.to_datetime(master_df["date"], errors="coerce")
+    master_df = master_df.sort_values(by="date", ascending=False).reset_index(drop=True)
+
+    master_df.to_csv(MASTER_OUTPUT, index=False, encoding="utf-8")
+    logger.info("\n[✓] Grand livre unifié généré : %s", MASTER_OUTPUT)
+    logger.info("    Total de transactions : %s", f"{len(master_df):,}")
+    return master_df
+
+
+if __name__ == "__main__":
+    res = load_and_standardize()
+    if res is None:
+        sys.exit(1)

@@ -1,124 +1,87 @@
-import re
-from datetime import date
+# Copyright (c) 2026 Elee Beaulieu. All rights reserved.
+
+"""Extracteur de relevés PDF de carte de crédit CIBC."""
+
+import logging
 from pathlib import Path
+import re
+import sys
 
-import pandas as pd
 import pdfplumber
+import pandas as pd
 
-RELEVES_DIR = Path(r"C:\Users\sport\Downloads\CIBC_statements")
-OUTPUT_FILE = Path("cibc_transactions.csv")
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
 
-MONTH_MAP = {
-    "jan": 1, "janv": 1, "janvier": 1,
-    "fev": 2, "fév": 2, "février": 2,
-    "mar": 3, "mars": 3,
-    "avr": 4, "avril": 4,
-    "mai": 5,
-    "juin": 6,
-    "juil": 7, "juillet": 7,
-    "aout": 8, "août": 8,
-    "sep": 9, "sept": 9, "septembre": 9,
-    "oct": 10, "octobre": 10,
-    "nov": 11, "novembre": 11,
-    "dec": 12, "déc": 12, "décembre": 12,
-}
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = REPO_ROOT / "data"
+DATA_DIR.mkdir(exist_ok=True)
+OUTPUT_CSV = DATA_DIR / "cibc_transactions.csv"
 
-TX_REGEX = re.compile(
-    r"^(?:Ý\s*)?(?P<month>[a-zéû.-]+)\s+(?P<day>\d{1,2})\s+"
-    r"[a-zéû.-]+\s+\d{1,2}\s+"
-    r"(?P<description>.+?)\s+"
-    r"(?P<amount>-?\d[\d\s]*[.,]\d{2})\s*$",
-    re.IGNORECASE,
-)
-
-DATE_REGEX = re.compile(
-    r"(?:Date du relevé\s*\n\s*|au\s+)(?P<day>\d{1,2})\s+(?P<month>[a-zéû.-]+)\s+(?P<year>\d{4})",
-    re.IGNORECASE,
-)
+DATE_PATTERN = re.compile(r"^([A-Z][a-z]{2}\s+\d{1,2})")
 
 
-def parse_month(raw_month: str) -> int:
-    clean = raw_month.strip().lower().rstrip(".")
-    return MONTH_MAP.get(clean, 1)
+def parse_cibc(pdf_path: Path) -> list[dict]:
+    """Extrait les transactions d'un relevé de carte CIBC."""
+    records = []
+    statement_date = None
 
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            lines = text.split("\n")
 
-def parse_amount(raw_amount: str) -> float:
-    cleaned = raw_amount.replace(" ", "").replace(",", ".")
-    val = float(cleaned)
-    # Sur CIBC Mastercard : dépenses positives -> débit négatif (-X), crédits négatifs -> crédit positif (+X)
-    return -val
+            for line in lines:
+                if not statement_date and "Statement Date" in line:
+                    stmt_match = re.search(r"Statement Date\s*:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})", line)
+                    if stmt_match:
+                        statement_date = stmt_match.group(1)
 
-
-def main() -> None:
-    all_records = []
-    pdf_files = sorted(RELEVES_DIR.glob("*.pdf"))
-
-    print(f"Début du traitement de {len(pdf_files)} fichiers CIBC...")
-
-    for pdf_path in pdf_files:
-        try:
-            with pdfplumber.open(pdf_path) as pdf:
-                full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
-
-                # Extraction date du relevé
-                stmt_date = None
-                date_match = DATE_REGEX.search(full_text)
+                date_match = DATE_PATTERN.match(line)
                 if date_match:
-                    d = int(date_match.group("day"))
-                    m = parse_month(date_match.group("month"))
-                    y = int(date_match.group("year"))
-                    stmt_date = date(y, m, d)
-                else:
-                    # Fallback nom de fichier onlineStatement_YYYY-MM-DD.pdf
-                    fb = re.search(r"(\d{4})-(\d{2})-(\d{2})", pdf_path.name)
-                    if fb:
-                        stmt_date = date(int(fb.group(1)), int(fb.group(2)), int(fb.group(3)))
+                    raw_date = date_match.group(1)
+                    rem = line[len(raw_date):].strip()
 
-                if not stmt_date:
-                    print(f"[X] Date introuvable sur {pdf_path.name}")
-                    continue
+                    amt_match = re.search(r"(-?[\d,]+\.\d{2})-?$", rem)
+                    if amt_match:
+                        raw_amt = amt_match.group(1).replace(",", "")
+                        desc = rem[:amt_match.start()].strip()
+                        try:
+                            amt_val = float(raw_amt)
+                            is_credit = line.strip().endswith("-") or "PAYMENT" in desc.upper()
+                            records.append({
+                                "date": raw_date,
+                                "institution": "CIBC",
+                                "account_type": "Credit",
+                                "account_section": "Costco Mastercard",
+                                "description": desc,
+                                "amount": amt_val if is_credit else -amt_val,
+                                "code": None,
+                                "statement_date": statement_date,
+                                "source_file": pdf_path.name,
+                            })
+                        except ValueError:
+                            continue
+    return records
 
-                for page in pdf.pages:
-                    text = page.extract_text()
-                    if not text:
-                        continue
-                    for line in text.splitlines():
-                        match = TX_REGEX.match(line.strip())
-                        if match:
-                            m_raw = match.group("month")
-                            day = int(match.group("day"))
-                            month = parse_month(m_raw)
 
-                            # Calcul année de la transaction
-                            year = stmt_date.year - 1 if month > stmt_date.month else stmt_date.year
-                            tx_date = date(year, month, day)
+def main():
+    """Point d'entrée pour l'ingestion des relevés CIBC."""
+    pdf_files = list(REPO_ROOT.glob("*.pdf")) + list((REPO_ROOT / "raw_pdf").glob("*.pdf"))
+    all_records = []
 
-                            desc = match.group("description").strip()
-                            amount = parse_amount(match.group("amount"))
+    for pdf_file in pdf_files:
+        if "cibc" in pdf_file.name.lower() or "costco" in pdf_file.name.lower():
+            logger.info("Traitement : %s", pdf_file.name)
+            all_records.extend(parse_cibc(pdf_file))
 
-                            all_records.append(
-                                {
-                                    "date": tx_date,
-                                    "statement_date": stmt_date,
-                                    "description": desc,
-                                    "amount": amount,
-                                    "source_file": pdf_path.name,
-                                }
-                            )
-
-        except Exception as err:
-            print(f"[X] Erreur sur {pdf_path.name} : {err}")
+    if not all_records:
+        logger.warning("[!] Aucune transaction CIBC trouvée.")
+        sys.exit(0)
 
     df = pd.DataFrame(all_records)
-
-    if not df.empty:
-        df.sort_values(by=["date", "statement_date"], inplace=True)
-        df.to_csv(OUTPUT_FILE, index=False, encoding="utf-8")
-        print(f"\n[✓] Succès : {len(df)} transactions CIBC exportées dans {OUTPUT_FILE}")
-        print("\nAperçu des 10 premières lignes :")
-        print(df.head(10).to_string(index=False))
-    else:
-        print("\n[!] Aucune transaction trouvée.")
+    df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8")
+    logger.info("[✓] %s transactions exportées dans %s", f"{len(df):,}", OUTPUT_CSV)
 
 
 if __name__ == "__main__":
