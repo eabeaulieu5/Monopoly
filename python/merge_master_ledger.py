@@ -1,12 +1,9 @@
 # Copyright (c) 2026 Elee Beaulieu. All rights reserved.
 
-"""Script de consolidation du Grand Livre avec colonne raw_category."""
+"""Script de consolidation du Grand Livre (Master Ledger) unifiant Débit/Crédit Desjardins et CIBC."""
 
 import logging
 from pathlib import Path
-import re
-import sys
-
 import pandas as pd
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -14,60 +11,50 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / "data"
-OUTPUT_LEDGER = DATA_DIR / "all_transactions.csv"
+OUTPUT_MASTER_CSV = DATA_DIR / "all_transactions.csv"
 
-
-def clean_section_label(val: str) -> str:
-    """Normalise les libellés de sous-comptes."""
-    if not isinstance(val, str):
-        return "Autre"
-    val = re.sub(r"\(No de contrat\s*:\s*[^\)]+\)", "", val).strip()
-    if "PROFIT JEUNESSE" in val.upper():
-        return "Desjardins - Compte Profit Jeunesse"
-    if "OPÉRATIONS COURANTES" in val.upper():
-        return "Desjardins - Opérations Courantes"
-    if "CELI" in val.upper():
-        return "Desjardins - Épargne CELI"
-    if "COMPTE D'EPARGNE" in val.upper() or "ÉPARGNE" in val.upper():
-        return "Desjardins - Épargne & Placements"
-    if "COSTCO" in val.upper():
-        return "CIBC - Costco Mastercard"
-    if "MASTERCARD" in val.upper() or "VISA" in val.upper():
-        return "Desjardins - Carte de Crédit"
-    return val
-
+FILES = [
+    DATA_DIR / "desjardins_debit_transactions.csv",
+    DATA_DIR / "desjardins_transactions.csv",
+    DATA_DIR / "cibc_transactions.csv",
+]
 
 def main():
-    """Consolide les sources en préservant raw_category."""
-    source_files = [
-        DATA_DIR / "desjardins_debit_transactions.csv",
-        DATA_DIR / "desjardins_transactions.csv",
-        DATA_DIR / "cibc_transactions.csv",
-    ]
-
     dfs = []
-    for f in source_files:
+    for f in FILES:
         if f.exists():
-            df_src = pd.read_csv(f)
-            logger.info("Chargement : %s (%s lignes)", f.name, f"{len(df_src):,}")
-            dfs.append(df_src)
+            df_part = pd.read_csv(f)
+            if "raw_category" in df_part.columns:
+                df_part = df_part.drop(columns=["raw_category"])
+            dfs.append(df_part)
+            logger.info("Chargé : %s (%s lignes)", f.name, f"{len(df_part):,}")
+        else:
+            logger.warning("Fichier manquant : %s", f.name)
 
     if not dfs:
-        logger.error("[!] Aucun fichier source trouvé dans %s", DATA_DIR)
-        sys.exit(1)
+        logger.error("Aucun fichier source disponible pour la fusion.")
+        return
 
     master_df = pd.concat(dfs, ignore_index=True)
-    if "raw_category" not in master_df.columns:
-        master_df["raw_category"] = None
+    
+    if "raw_category" in master_df.columns:
+        master_df = master_df.drop(columns=["raw_category"])
 
-    master_df["account_section"] = master_df["account_section"].apply(clean_section_label)
-    master_df = master_df.dropna(subset=["amount"])
+    columns_order = [
+        "date", "institution", "account_type", "account_section",
+        "description", "category", "code", "amount", "statement_date", "source_file"
+    ]
+    for col in columns_order:
+        if col not in master_df.columns:
+            master_df[col] = None
+
+    master_df = master_df[columns_order]
+    
+    master_df = master_df.drop_duplicates(subset=["date", "institution", "account_section", "description", "amount", "statement_date"])
     master_df = master_df.sort_values(by="date", ascending=False).reset_index(drop=True)
-
-    master_df.to_csv(OUTPUT_LEDGER, index=False, encoding="utf-8")
-    logger.info("\n[✓] Grand livre unifié généré : %s", OUTPUT_LEDGER)
-    logger.info("    Total de transactions : %s", f"{len(master_df):,}")
-
+    
+    master_df.to_csv(OUTPUT_MASTER_CSV, index=False, encoding="utf-8")
+    logger.info("[✓] Grand Livre consolidé créé : %s (%s transactions)", OUTPUT_MASTER_CSV.name, f"{len(master_df):,}")
 
 if __name__ == "__main__":
     main()
