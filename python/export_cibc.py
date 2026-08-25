@@ -1,12 +1,11 @@
 # Copyright (c) 2026 Elee Beaulieu. All rights reserved.
 
-"""Extracteur autonome de relevés CIBC avec description intégrale et catégorisation des remboursements."""
+"""Extracteur CIBC avec taxonomie officielle des catégories en français."""
 
 import logging
 from pathlib import Path
 import re
 import sys
-
 import pandas as pd
 import pdfplumber
 
@@ -17,197 +16,183 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 OUTPUT_CSV = DATA_DIR / "cibc_transactions.csv"
+SOURCE_DIR = REPO_ROOT.parent / "cibc_statements"
 
-DATE_PATTERN = re.compile(
-    r"^([A-Za-zÉÉèéûû]{3,4}\.?\s+\d{1,2}(?:\s+[A-Za-zÉÉèéûû]{3,4}\.?\s+\d{1,2})?)\s+",
-    re.IGNORECASE,
-)
+if not SOURCE_DIR.exists():
+    SOURCE_DIR = REPO_ROOT / "cibc_statements"
 
 MONTH_MAP = {
-    "jan": "01", "janv": "01", "janvier": "01",
-    "fév": "02", "fev": "02", "févr": "02", "fevr": "02", "février": "02", "fevrier": "02",
-    "mar": "03", "mars": "03",
-    "avr": "04", "avril": "04",
-    "mai": "05",
-    "jun": "06", "juin": "06",
-    "jlt": "07", "juil": "07", "juillet": "07", "jul": "07",
-    "aoû": "08", "aou": "08", "août": "08", "aout": "08",
-    "sep": "09", "sept": "09", "septembre": "09",
-    "oct": "10", "octobre": "10",
-    "nov": "11", "novembre": "11",
-    "déc": "12", "dec": "12", "décembre": "12", "decembre": "12",
+    "jan": "01", "janv": "01", "january": "01", "janvier": "01",
+    "feb": "02", "fév": "02", "fev": "02", "february": "02", "février": "02",
+    "mar": "03", "march": "03", "mars": "03",
+    "apr": "04", "avr": "04", "april": "04", "avril": "04",
+    "may": "05", "mai": "05",
+    "jun": "06", "june": "06", "juin": "06",
+    "jlt": "07", "jul": "07", "july": "07", "juil": "07", "juillet": "07",
+    "aug": "08", "aoû": "08", "aou": "08", "august": "08", "août": "08",
+    "sep": "09", "sept": "09", "september": "09", "septembre": "09",
+    "oct": "10", "october": "10", "octobre": "10",
+    "nov": "11", "november": "11", "novembre": "11",
+    "dec": "12", "déc": "12", "december": "12", "décembre": "12",
 }
 
-SUMMARY_KEYWORDS = [
-    "TOTAL DES PAIEMENTS", "TOTAL DES NOUVEAUX PAIEMENTS", "TOTAL DES ACHATS",
-    "TOTAL DES CRÉDITS", "TOTAL DES CREDITS", "SOLDE PRÉCÉDENT", "SOLDE PRECEDENT",
-    "NOUVEAU SOLDE", "SOLDE EN COURS", "SOUS-TOTAL", "SUBTOTAL"
+# Taxonomie officielle CIBC (Français & Anglais)
+CIBC_OFFICIAL_CATEGORIES = [
+    # Catégories officielles complètes FR
+    "Dépenses personnelles et dépenses du ménage",
+    "Depenses personnelles et depenses du menage",
+    "Services professionnels ou services financiers",
+    "Magasins de détail et épicerie",
+    "Magasins de detail et epicerie",
+    "Rénovation de maison et de bureau",
+    "Renovation de maison et de bureau",
+    "Santé et éducation",
+    "Sante et education",
+    "Transports",
+    "Transport",
+    "Restaurants",
+    "Restaurant",
+    
+    # Équivalents anglais et variantes raccourcies
+    "Personal and Household Expenses",
+    "Professional and Financial Services",
+    "Retail and Grocery",
+    "Home and Office Improvement",
+    "Health and Education",
+    "Transportation",
+    "Recurring Payments",
+    "Paiements récurrents",
+    "Paiements recurrents",
+    "Épicerie",
+    "Epicerie",
+    "Détail",
+    "Detail",
+    "Autre",
+    "Other"
 ]
 
-CIBC_CATEGORY_PATTERNS = [
-    (re.compile(r"\s+(?:Voyages?\s+(?:et|/|\&)\s+transports?|Transports?\s+(?:et|/|\&)\s+voyages?|Transports?|Voyages?)$", re.IGNORECASE), "Transports et voyages"),
-    (re.compile(r"\s+Magasins?\s+de\s+détail\s+et\s+épicerie[s]?$", re.IGNORECASE), "Magasins de détail et épicerie"),
-    (re.compile(r"\s+Rénovation\s+de\s+maison\s+et\s+de\s+bureau$", re.IGNORECASE), "Rénovation de maison et de bureau"),
-    (re.compile(r"\s+Services?\s+professionnels?\s+ou\s+services?$", re.IGNORECASE), "Services professionnels ou services"),
-    (re.compile(r"\s+Services?\s+de\s+télécommunications?$", re.IGNORECASE), "Services de télécommunications"),
-    (re.compile(r"\s+Station[s]?-service\s+et\s+essence$", re.IGNORECASE), "Station-service et essence"),
-    (re.compile(r"\s+Santé\s+et\s+éducation$", re.IGNORECASE), "Santé et éducation"),
-    (re.compile(r"\s+Hôtels,\s+divertissement\s+et\s+loisirs$", re.IGNORECASE), "Hôtels, divertissement et loisirs"),
-    (re.compile(r"\s+Dépenses\s+personnelles\s+et\s+dépenses\s+du.*$", re.IGNORECASE), "Dépenses personnelles et ménage"),
-    (re.compile(r"\s+Restaurants?$", re.IGNORECASE), "Restaurants"),
-    (re.compile(r"\s+Divertissements?$", re.IGNORECASE), "Divertissement"),
-    (re.compile(r"\s+Santé\s+et\s+soins\s+personnels?$", re.IGNORECASE), "Santé et soins personnels"),
-    (re.compile(r"\s+Assurances?$", re.IGNORECASE), "Assurance"),
-    (re.compile(r"\s+Frais\s+bancaires?$", re.IGNORECASE), "Frais bancaires"),
-]
+# Tri par longueur décroissante pour matcher les expressions les plus longues en premier
+SORTED_CATEGORIES = sorted(CIBC_OFFICIAL_CATEGORIES, key=len, reverse=True)
 
+TX_PATTERN_MONTH_FIRST = re.compile(
+    r"^([A-Za-zÉÉèéûû]{3,9}\.?)\s+(\d{1,2})\s+(?:[A-Za-zÉÉèéûû]{3,9}\.?\s+)?(?:\d{1,2}\s+)?(.+?)\s+(-?\$?\s*\d{1,3}(?:[ ,]\d{3})*[.,]\d{2}-?)$",
+    re.IGNORECASE
+)
 
-def extract_category_and_merchant(text: str) -> tuple[str, str | None]:
-    """Extrait la catégorie marchande sans modifier la description si c'est un paiement."""
-    clean = text.strip()
+TX_PATTERN_DAY_FIRST = re.compile(
+    r"^(\d{1,2})\s+([A-Za-zÉÉèéûû]{3,9}\.?)\s+(?:\d{1,2}\s+)?(?:[A-Za-zÉÉèéûû]{3,9}\.?\s+)?(.+?)\s+(-?\$?\s*\d{1,3}(?:[ ,]\d{3})*[.,]\d{2}-?)$",
+    re.IGNORECASE
+)
 
-    # Si paiement de facture / remboursement
-    if "PAYMENT THANK YOU" in clean.upper() or "PAIEMENT MERCI" in clean.upper():
-        return clean, "Paiement de solde / Remboursement"
+def parse_cibc_statement_date(pdf_path: Path) -> tuple[str, int, int]:
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", pdf_path.name)
+    if m:
+        y, mo, d = m.groups()
+        return f"{y}-{mo}-{d}", int(y), int(mo)
+    return "2026-01-01", 2026, 1
 
-    # Pour les achats marchands avec catégorie accolée à la fin
-    for pattern, canonical_cat in CIBC_CATEGORY_PATTERNS:
-        match = pattern.search(clean)
-        if match:
-            merchant = clean[:match.start()].strip()
-            return merchant, canonical_cat
+def clean_and_split_desc_category(raw_desc: str) -> tuple[str, str]:
+    """Nettoie le préfixe de date et sépare la description de la catégorie CIBC officielle."""
+    desc = raw_desc.strip()
+    
+    # 1. Supprimer le résidu de posting date en tête
+    desc = re.sub(
+        r"^(?:[A-Za-zÉÉèéûû]{3,9}\.?\s+\d{1,2}|\d{1,2}\s+[A-Za-zÉÉèéûû]{3,9}\.?|\d{1,2})\s+",
+        "",
+        desc,
+        flags=re.IGNORECASE
+    ).strip()
 
-    return clean, None
+    # 2. Si c'est un paiement, ne pas chercher de catégorie
+    if any(k in desc.upper() for k in ["PAYMENT", "PAIEMENT"]):
+        return desc, ""
 
+    # 3. Extraction de la catégorie terminale officielle
+    for cat in SORTED_CATEGORIES:
+        pattern = rf"\s+{re.escape(cat)}$"
+        if re.search(pattern, desc, re.IGNORECASE):
+            clean_d = re.sub(pattern, "", desc, flags=re.IGNORECASE).strip()
+            return clean_d, cat
 
-def parse_canadian_amount(raw_str: str) -> float | None:
-    """Convertit les montants québécois (virgule) et anglophones (point)."""
-    s = raw_str.strip().replace("$", "").strip()
-    if not s:
-        return None
+    return desc, ""
 
-    is_neg = s.startswith("-") or s.endswith("-")
-    s = s.strip("-").strip()
-
-    if re.search(r",\d{2}$", s):
-        s_clean = re.sub(r"[\s\.]", "", s[:-3]) + "." + s[-2:]
-    elif re.search(r"\.\d{2}$", s):
-        s_clean = re.sub(r"[\s\,]", "", s[:-3]) + "." + s[-2:]
-    else:
-        s_clean = re.sub(r"[\s\,\.]", "", s)
-
-    try:
-        val = float(s_clean)
-        return -val if is_neg else val
-    except ValueError:
-        return None
-
-
-def parse_iso_date_cibc(raw_date_part: str, ref_year: int, stmt_date_str: str | None) -> str:
-    """Convertit 'jan 02' en 'YYYY-MM-DD' avec gestion du saut d'année."""
-    parts = raw_date_part.strip().split()
-    if len(parts) >= 2:
-        m_str, d_str = parts[0].lower().rstrip("."), parts[1]
-        m_num = MONTH_MAP.get(m_str, "01")
-
-        year = ref_year
-        if stmt_date_str and "-01-" in stmt_date_str and m_num == "12":
-            year -= 1
-
-        return f"{year:04d}-{m_num}-{int(d_str):02d}"
-    return raw_date_part
-
-
-def parse_cibc(pdf_path: Path) -> list[dict]:
-    """Extrait et normalise les transactions CIBC."""
+def parse_cibc_pdf(pdf_path: Path) -> list[dict]:
+    statement_date, ref_year, ref_month = parse_cibc_statement_date(pdf_path)
     records = []
-    statement_date = None
-    ref_year = 2026
-
-    file_match = re.search(r"(\d{4})-(\d{2})-(\d{2})\.pdf$", pdf_path.name)
-    if file_match:
-        statement_date = file_match.group(1)
-        ref_year = int(file_match.group(1).split("-")[0])
 
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ""
             for line in text.split("\n"):
                 line_str = line.strip()
-                if not line_str:
+                if not line_str or any(k in line_str.upper() for k in ["PAGE ", "PREVIOUS BALANCE", "SOLDE PRÉCÉDENT", "SUBTOTAL", "TOTAL", "CATÉGORIES DE DÉPENSES"]):
                     continue
 
-                if not statement_date and "Statement Date" in line_str:
-                    stmt_match = re.search(r"Statement Date\s*:\s*([A-Za-z]+\s+\d{1,2},\s*(\d{4}))", line_str, re.IGNORECASE)
-                    if stmt_match:
-                        statement_date = stmt_match.group(1)
-                        ref_year = int(stmt_match.group(2))
+                raw_month, raw_day, raw_desc, raw_amt = None, None, None, None
 
-                if any(k in line_str.upper() for k in SUMMARY_KEYWORDS):
+                m1 = TX_PATTERN_MONTH_FIRST.match(line_str)
+                if m1:
+                    m_tok, d_tok, raw_desc, raw_amt = m1.groups()
+                    m_str = m_tok.lower().rstrip(".")
+                    if m_str in MONTH_MAP:
+                        raw_month = MONTH_MAP[m_str]
+                        raw_day = int(d_tok)
+
+                if not raw_month:
+                    m2 = TX_PATTERN_DAY_FIRST.match(line_str)
+                    if m2:
+                        d_tok, m_tok, raw_desc, raw_amt = m2.groups()
+                        m_str = m_tok.lower().rstrip(".")
+                        if m_str in MONTH_MAP:
+                            raw_month = MONTH_MAP[m_str]
+                            raw_day = int(d_tok)
+
+                if not raw_month or not raw_day or not raw_amt:
                     continue
 
-                date_match = DATE_PATTERN.match(line_str)
-                if not date_match:
-                    continue
+                tx_month = int(raw_month)
+                tx_year = ref_year - 1 if ref_month == 1 and tx_month == 12 else ref_year
+                iso_date = f"{tx_year:04d}-{tx_month:02d}-{raw_day:02d}"
 
-                full_date_block = date_match.group(1)
-                rem = line_str[len(date_match.group(0)):].strip()
+                merchant_desc, tx_cat = clean_and_split_desc_category(raw_desc)
 
-                date_parts = full_date_block.split()
-                first_date = f"{date_parts[0]} {date_parts[1]}" if len(date_parts) >= 2 else full_date_block
-                iso_date = parse_iso_date_cibc(first_date, ref_year, statement_date)
+                clean_amt_str = raw_amt.replace("$", "").replace(" ", "").replace(",", ".")
+                is_credit = clean_amt_str.endswith("-") or clean_amt_str.startswith("-") or "PAYMENT" in merchant_desc.upper() or "PAIEMENT" in merchant_desc.upper()
+                clean_amt_num = float(clean_amt_str.replace("-", ""))
+                final_amt = clean_amt_num if is_credit else -clean_amt_num
 
-                amt_match = re.search(r"(-?[\d\s\.,]+(?:,\d{2}|\.\d{2}))\s*\$?\s*(CR|-)?\s*\$?$", rem, re.IGNORECASE)
-                if amt_match:
-                    raw_amt_str = amt_match.group(1)
-                    has_cr_or_minus = bool(amt_match.group(2)) or "-" in rem[amt_match.start():]
-                    raw_desc = rem[:amt_match.start()].strip()
+                records.append({
+                    "date": iso_date,
+                    "institution": "CIBC",
+                    "account_type": "Credit Card",
+                    "account_section": "Credit Card Account",
+                    "description": merchant_desc,
+                    "category": tx_cat,
+                    "amount": final_amt,
+                    "statement_date": statement_date,
+                    "source_file": pdf_path.name,
+                })
 
-                    if any(k in raw_desc.upper() for k in SUMMARY_KEYWORDS):
-                        continue
-
-                    parsed_val = parse_canadian_amount(raw_amt_str)
-                    if parsed_val is None:
-                        continue
-
-                    final_desc, category = extract_category_and_merchant(raw_desc)
-                    is_credit = has_cr_or_minus or "PAYMENT" in raw_desc.upper() or "PAIEMENT" in raw_desc.upper()
-                    final_amount = abs(parsed_val) if is_credit else -abs(parsed_val)
-
-                    records.append({
-                        "date": iso_date,
-                        "institution": "CIBC",
-                        "account_type": "Credit",
-                        "account_section": "Costco Mastercard",
-                        "description": final_desc,
-                        "raw_category": category,
-                        "amount": final_amount,
-                        "code": "PAYMENT" if is_credit else "PURCHASE",
-                        "statement_date": statement_date,
-                        "source_file": pdf_path.name,
-                    })
     return records
 
-
 def main():
-    """Point d'entrée pour l'ingestion des relevés CIBC."""
-    source_dir = REPO_ROOT.parent / "CIBC_statements"
-    pdf_files = sorted(list(source_dir.glob("*.pdf")))
+    if not SOURCE_DIR.exists():
+        logger.warning("[!] Dossier %s introuvable.", SOURCE_DIR)
+        return
 
+    pdf_files = sorted(list(SOURCE_DIR.glob("*.pdf")))
     all_records = []
-    for pdf_file in pdf_files:
-        records = parse_cibc(pdf_file)
-        all_records.extend(records)
-
-    if not all_records:
-        logger.warning("[!] Aucune transaction CIBC trouvée.")
-        sys.exit(0)
+    for pdf in pdf_files:
+        recs = parse_cibc_pdf(pdf)
+        all_records.extend(recs)
 
     df = pd.DataFrame(all_records)
-    df = df.sort_values(by="date", ascending=False).reset_index(drop=True)
-    df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8")
-    logger.info("[✓] %s transactions CIBC exportées dans %s", f"{len(df):,}", OUTPUT_CSV)
-
+    if not df.empty:
+        df = df.sort_values(by="date", ascending=False).reset_index(drop=True)
+        df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8")
+        logger.info("[✓] %s transactions exportées dans %s", f"{len(df):,}", OUTPUT_CSV.name)
+    else:
+        logger.warning("[!] Aucune transaction extraite.")
 
 if __name__ == "__main__":
     main()
