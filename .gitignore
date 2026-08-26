@@ -1,14 +1,16 @@
-# Environnements et caches
-__pycache__/
-*.pyc
+# Données bancaires (ne pas envoyer sur GitHub)
+data/*.csv
+!data/.gitkeep
+
+# Fichiers de configuration / mapping
+!config/merchant_mapping.csv
+
+# Environnements et caches R / Python
 .Rhistory
 .RData
 .Rproj.user/
+__pycache__/
+*.pyc
 monopoly_env/
-
-# Données personnelles et sorties
-data/
-output/
-*.pdf
-*.csv
-*.png
+.vscode/
+.positron/
