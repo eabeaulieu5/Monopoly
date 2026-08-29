@@ -10,7 +10,6 @@ from pydantic_core import ArgsKwargs
 from monopoly.constants import Columns
 
 
-# ruff: noqa: N805
 @dataclass
 class RawTransaction:
     """

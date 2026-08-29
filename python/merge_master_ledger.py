@@ -3,9 +3,9 @@
 """Script de consolidation du Grand Livre allégé sans statement_date."""
 
 import logging
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 import pandas as pd
 

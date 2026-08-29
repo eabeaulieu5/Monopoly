@@ -62,10 +62,9 @@ def test_missing_password_raises_error():
     mock_pdf_passwords_instance = MagicMock()
     mock_pdf_passwords_instance.pdf_passwords = []
 
-    with raises(MissingPasswordError):
-        with patch("monopoly.pdf.PdfPasswords", return_value=mock_pdf_passwords_instance):
-            pdf_document = PdfDocument(passwords=None, file_path=fixture_directory / "protected.pdf")
-            pdf_document.unlock_document()
+    with raises(MissingPasswordError), patch("monopoly.pdf.PdfPasswords", return_value=mock_pdf_passwords_instance):
+        pdf_document = PdfDocument(passwords=None, file_path=fixture_directory / "protected.pdf")
+        pdf_document.unlock_document()
 
 
 def test_null_password_raises_error():

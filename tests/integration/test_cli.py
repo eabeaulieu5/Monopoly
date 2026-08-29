@@ -1,14 +1,16 @@
 import os
 import re
 from pathlib import Path
+
 import pytest
 from click.testing import CliRunner
-from monopoly.cli.models import Report, Result
+
 from monopoly.cli import (
     get_statement_paths,
     monopoly,
     pprint_transactions,
 )
+from monopoly.cli.models import Report, Result
 from monopoly.statements.transaction import Transaction
 
 

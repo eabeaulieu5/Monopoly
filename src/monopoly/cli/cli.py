@@ -50,7 +50,6 @@ def _process_with_gemini(file: Path, config: RunConfig) -> Result | None:
         )
         return Result(file.name, output_file.name)
 
-    # ruff: noqa: BLE001
     except Exception as err:
         error_info = {
             "message": f"{type(err).__name__}: {err!s}",
@@ -128,7 +127,6 @@ def _process_with_pipeline(file: Path, config: RunConfig) -> Result | None:
         )
         return Result(file.name, output_file.name)
 
-    # ruff: noqa: BLE001
     except Exception as err:
         error_info = {
             "message": f"{type(err).__name__}: {err!s}",

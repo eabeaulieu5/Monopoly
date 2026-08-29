@@ -1,8 +1,9 @@
-import pytest
 from unittest.mock import Mock, PropertyMock
 
-from monopoly.pdf import PdfParser
+import pytest
+
 from monopoly.identifiers import MetadataIdentifier, TextIdentifier
+from monopoly.pdf import PdfParser
 
 
 class MockPdfDocument:

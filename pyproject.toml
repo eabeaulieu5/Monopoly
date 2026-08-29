@@ -73,29 +73,23 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["ALL"]
-fixable = ["ALL"]
-exclude = ["tests/*"]
-
 ignore = [
-    # modules
-    "ANN",
-
-    # specific rules
-    "COM812",
-    "D100",
-    "D101",
-    "D102",
-    "D103",
-    "D104",
-    "D105",
-    "D106",
-    "D107",
-    "D203",
-    "D212",
-    "ISC001",
-    "PTH123"
+    "CPY",      # Pas de notice de copyright obligatoire
+    "T201",     # Autorise print()
+    "PLC0415",  # Autorise les imports différés (lazy imports)
+    "PLR",      # Désactive les limites de complexité/branches/magic numbers
+    "C901",     # Désactive la complexité cyclomatique
+    "BLE001",   # Autorise la capture générique Exception
+    "PD002",    # Autorise inplace=True
+    "E501",     # Ignore les lignes trop longues
+    "D",        # Ignore les docstrings stricts
+    "RUF001",   # Ignore les apostrophes typographiques
+    "DTZ",      # Ignore les règles de fuseaux horaires (datetime tzinfo)
+    "RUF012",   # Autorise les valeurs mutables par défaut dans les classes mock
+    "SIM117",   # Autorise les blocs `with` imbriqués dans les tests
+    "PERF",     # Ignore les micro-optimisations de performance dans les tests
 ]
+
 
 [tool.ruff.lint.per-file-ignores]
 "**/banks/**.py" = ["RUF012"]

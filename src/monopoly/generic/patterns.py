@@ -149,14 +149,14 @@ class PatternMatcher:
             normalized = _SEPARATOR_RE.sub(" ", raw_date)
             normalized = _MULTI_SPACE_RE.sub(" ", normalized).strip()
             try:
-                parsed = datetime.strptime(normalized, fmt)  # noqa: DTZ007
+                parsed = datetime.strptime(normalized, fmt)
             except ValueError:
                 pass
             else:
                 # strptime defaults to year 1900 when no year in format;
                 # use current year for consistent date comparisons
                 if "%y" not in fmt.lower():
-                    parsed = parsed.replace(year=datetime.now().year)  # noqa: DTZ005
+                    parsed = parsed.replace(year=datetime.now().year)
                 return parsed
 
         from dateparser import parse

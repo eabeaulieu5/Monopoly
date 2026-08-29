@@ -2,8 +2,9 @@
 
 """Audit de complétude calibré avec validation stricte des mois bancaires."""
 
-from pathlib import Path
 import re
+from pathlib import Path
+
 import pandas as pd
 import pdfplumber
 
@@ -33,7 +34,7 @@ print("-" * 83)
 total_pdf = 0
 total_csv = len(df_extracted)
 
-for pdf_file in sorted(list(SOURCE_DIR.glob("*.pdf"))):
+for pdf_file in sorted(SOURCE_DIR.glob("*.pdf")):
     pdf_count = 0
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:

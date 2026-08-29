@@ -40,7 +40,7 @@ DATE_REGEX = re.compile(
 def get_target_directory() -> Path:
     while True:
         raw_input = input("Entrez le chemin du dossier contenant les PDF (ou 'q' pour quitter) : ").strip()
-        
+
         if raw_input.lower() in ("q", "quit", "exit"):
             print("Arrêt du script.")
             sys.exit(0)
@@ -50,7 +50,7 @@ def get_target_directory() -> Path:
 
         if target_dir.is_dir():
             return target_dir
-        
+
         print(f"[X] Dossier introuvable ou invalide : '{target_dir}'. Réessayez.\n")
 
 

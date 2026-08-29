@@ -7,7 +7,7 @@ import pytest
 from monopoly.constants import EntryType, SharedPatterns
 from monopoly.constants.date import DateFormats
 from monopoly.generic import DateMatch, DatePatternAnalyzer
-from monopoly.pdf import PdfPage, MetadataIdentifier
+from monopoly.pdf import MetadataIdentifier, PdfPage
 
 
 @pytest.fixture(scope="session")

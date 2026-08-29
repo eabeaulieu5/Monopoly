@@ -1,7 +1,6 @@
 """Test filename fallback for statement dates when not found in content."""
 
 import re
-from datetime import datetime
 from pathlib import Path
 
 import pytest

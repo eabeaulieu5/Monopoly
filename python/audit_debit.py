@@ -3,8 +3,8 @@
 """Script d'audit et de validation des transactions de débit Desjardins."""
 
 import logging
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pandas as pd
 

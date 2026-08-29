@@ -6,8 +6,8 @@ from monopoly.pdf import PdfPage
 from monopoly.statements import BaseStatement
 from monopoly.statements.base import MatchContext
 from monopoly.statements.transaction import (
-    Transaction,
     RawTransaction,
+    Transaction,
 )
 
 

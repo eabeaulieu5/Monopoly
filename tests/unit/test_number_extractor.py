@@ -1,6 +1,5 @@
 """Unit tests for NumberExtractor class."""
 
-import pytest
 
 from monopoly.pdf import PdfPage
 from monopoly.statements.number_extractor import NumberExtractor
