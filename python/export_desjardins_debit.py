@@ -1,244 +1,182 @@
-# Copyright (c) 2026 Elee Beaulieu. All rights reserved.
-
-"""Extracteur de débit Desjardins épuré sans statement_date."""
-
-import logging
-from pathlib import Path
 import re
 import sys
-
+from datetime import date
+from pathlib import Path
 import pandas as pd
 import pdfplumber
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-logger = logging.getLogger(__name__)
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = REPO_ROOT / "data"
-DATA_DIR.mkdir(exist_ok=True)
-OUTPUT_CSV = DATA_DIR / "desjardins_debit_transactions.csv"
-
-DATE_PATTERN = re.compile(r"^(\d{1,2}\s+[A-Za-zÉÉèéûû]{3,5}\.?)\s+", re.IGNORECASE)
+OUTPUT_FILE = Path("desjardins_debit_transactions.csv")
 
 MONTH_MAP = {
-    "jan": "01", "janv": "01", "janvier": "01",
-    "fév": "02", "fev": "02", "févr": "02", "fevr": "02", "février": "02", "fevrier": "02",
-    "mar": "03", "mars": "03",
-    "avr": "04", "avril": "04",
-    "mai": "05",
-    "jun": "06", "juin": "06",
-    "jlt": "07", "juil": "07", "juillet": "07", "jul": "07",
-    "aoû": "08", "aou": "08", "août": "08", "aout": "08",
-    "sep": "09", "sept": "09", "septembre": "09",
-    "oct": "10", "octobre": "10",
-    "nov": "11", "novembre": "11",
-    "déc": "12", "dec": "12", "décembre": "12", "decembre": "12",
+    "jan": 1, "janv": 1, "janvier": 1,
+    "fev": 2, "fév": 2, "février": 2,
+    "mar": 3, "mars": 3,
+    "avr": 4, "avril": 4,
+    "mai": 5,
+    "jun": 6, "juin": 6, "jul": 7, "juil": 7, "juillet": 7,
+    "aou": 8, "août": 8, "aout": 8,
+    "sep": 9, "sept": 9, "septembre": 9,
+    "oct": 10, "octobre": 10,
+    "nov": 11, "novembre": 11,
+    "dec": 12, "déc": 12, "décembre": 12,
 }
 
-BASE_DESJARDINS_CODES = {
-    "ACH", "POS", "APA", "ART", "BNI", "CRM", "CRP", "PAI", "FAC", "TEL",
-    "VMW", "VIW", "VIR", "VAE", "VME", "VAD", "VMD", "VMO", "VNW", "VRW", "VWW",
-    "VAC", "VCA", "VDW", "VEW", "VF", "VFC", "VFF", "VFI", "VGA", "VGP", "VPA", "VTR", "VVD", "VBW", "VC", "VIP",
-    "DEP", "CT", "DDI", "SAL", "DIV", "DCA", "DCC", "DCN", "DCP", "DCV", "CCN", "DVW", "DI",
-    "RET", "DT", "RGA", "RGP", "AGA", "DAB", "GAB", "EDI",
-    "PWW", "PPW", "PAC", "PCA", "PFN", "PFT", "RA", "PRV", "PRE", "RAV", "RAZ", "REC", "REM",
-    "RIC", "RRC", "RS", "VER", "VAP", "XAC", "XGA", "XWW", "SCN",
-    "INT", "IET", "ICP", "INP", "AOP", "ACS", "ADM", "AES", "AET", "FGD", "FAP", "FAD",
-    "FCP", "FCR", "FDC", "FEQ", "FER", "FGA", "FGM", "FIR", "FIX", "FOV", "FPP", "FRP",
-    "FSG", "FTC", "FTF", "FTX", "GWW", "GCW", "GTW", "COT", "RIF", "CR",
-    "CHQ", "VIS", "AJU", "ANN", "CCT", "CDD", "CDI", "CDT", "CFG", "CFS", "CGA", "CHG",
-    "CIN", "CPP", "CRA", "CRS", "CSL", "COR", "REV"
-}
+PERIOD_REGEX = re.compile(
+    r"au\s+(?P<day>\d{1,2})\s+(?P<month>[a-zéû.-]+)\s+(?P<year>\d{4})",
+    re.IGNORECASE
+)
 
-ALL_KNOWN_CODES = set(BASE_DESJARDINS_CODES)
-for c in BASE_DESJARDINS_CODES:
-    ALL_KNOWN_CODES.add(f"I{c}")
+DATE_CODE_PREFIX = re.compile(
+    r"^(?P<day>\d{1,2})\s+(?P<month>[A-ZÉÛa-zéû]{3,4})\s+(?P<code>[A-Z0-9]{2,6})\s+"
+)
 
-SORTED_CODE_PATTERNS = sorted(ALL_KNOWN_CODES, key=len, reverse=True)
+ACCOUNT_HEADER_PREFIX = ("EOP ", "COMPTE ", "ET ", "CS ")
 
 
-def clean_section_name(raw_name: str) -> str:
-    """Normalise les libellés de sous-comptes."""
-    s = raw_name.replace("(SUITE)", "").replace("(suite)", "").strip()
-    return re.sub(r"\s+", " ", s)
+def get_target_directory() -> Path:
+    while True:
+        raw_input = input("Entrez le chemin du dossier contenant les PDF Débit Desjardins (ou 'q' pour quitter) : ").strip()
+        
+        if raw_input.lower() in ("q", "quit", "exit"):
+            print("Arrêt du script.")
+            sys.exit(0)
+
+        cleaned_path = raw_input.strip("\"'")
+        target_dir = Path(cleaned_path).expanduser().resolve()
+
+        if target_dir.is_dir():
+            return target_dir
+        
+        print(f"[X] Dossier introuvable ou invalide : '{target_dir}'. Réessayez.\n")
 
 
-def split_code_and_description(raw_body: str) -> tuple[str, str]:
-    """Extrait le code officiel Desjardins et la description marchande."""
-    raw = raw_body.strip()
-    for code in SORTED_CODE_PATTERNS:
-        if raw.upper().startswith(code):
-            remainder = raw[len(code):].strip()
-            if len(code) == 2 and remainder and remainder[0].isalnum():
-                continue
-            return code, remainder
-
-    match = re.match(r"^([A-Z]{2,4})\s+(.+)$", raw)
-    if match:
-        return match.group(1), match.group(2).strip()
-
-    return "POS", raw
+def clean_account_name(raw_name: str) -> str:
+    cleaned = re.sub(r"\s*\(\s*SUITE\s*\)", "", raw_name, flags=re.IGNORECASE).strip()
+    return cleaned
 
 
-def parse_iso_date(raw_date: str, ref_year: int) -> str:
-    """Convertit '31 DEC' ou '1 mai' en 'YYYY-MM-DD'."""
-    parts = raw_date.strip().split()
-    if len(parts) >= 2:
-        d_str, m_str = parts[0], parts[1].lower().rstrip(".")
-        m_num = MONTH_MAP.get(m_str, "01")
-        return f"{ref_year:04d}-{m_num}-{int(d_str):02d}"
-    return raw_date
+def parse_month(raw_month: str) -> int:
+    clean = raw_month.strip().lower().rstrip(".")
+    return MONTH_MAP.get(clean[:3], MONTH_MAP.get(clean, 1))
 
 
-def extract_amounts_and_clean_desc(tokens: list[str]) -> tuple[float | None, bool, str]:
-    """Extrait le montant exact, gère le trailing minus et nettoie la description."""
-    amt_indices = []
-    has_trailing_minus_map = {}
-
-    for i, tok in enumerate(tokens):
-        tok_clean = tok.replace("$", "").strip()
-        if re.match(r"^-?\d+[.,]\d{2}-?$", tok_clean):
-            amt_indices.append(i)
-            has_trailing_minus_map[i] = tok_clean.endswith("-") or tok_clean.startswith("-")
-
-    if not amt_indices:
-        return None, False, " ".join(tokens)
-
-    if len(amt_indices) >= 2:
-        tx_idx = amt_indices[-2]
-    else:
-        tx_idx = amt_indices[-1]
-
-    is_neg_token = has_trailing_minus_map.get(tx_idx, False)
-    raw_val_str = tokens[tx_idx].replace("$", "").replace("-", "").replace(",", ".").strip()
-
+def parse_amount(text: str) -> float:
+    cleaned = re.sub(r"[^\d.]", "", text.replace(",", ".").replace(" ", ""))
     try:
-        base_val = float(raw_val_str)
+        return float(cleaned)
     except ValueError:
-        return None, False, " ".join(tokens)
-
-    desc_tokens = tokens[:tx_idx]
-
-    if desc_tokens:
-        last_tok = desc_tokens[-1]
-        if re.match(r"^\d{1,2}$", last_tok):
-            prev_tok = desc_tokens[-2] if len(desc_tokens) >= 2 else ""
-            if not any(k in prev_tok.upper() for k in ["#", "STORE", "MAGASIN", "W", "SUCC", "NO"]):
-                thousands = int(last_tok)
-                if base_val < 1000:
-                    base_val = (thousands * 1000.0) + base_val
-                    desc_tokens = desc_tokens[:-1]
-        elif last_tok == "5" and base_val == 0.0:
-            base_val = 500.00
-            desc_tokens = desc_tokens[:-1]
-
-    return base_val, is_neg_token, " ".join(desc_tokens)
+        return 0.0
 
 
-def parse_desjardins_debit(pdf_path: Path) -> list[dict]:
-    """Extrait et normalise les transactions d'un relevé de débit Desjardins."""
+def process_statement(pdf_path: Path):
     records = []
-    current_section = "Compte Principal"
-    ref_year = 2026
-    is_loan_table = False
-
-    file_match = re.search(r"(\d{4})(\d{2})(\d{2})\.pdf$", pdf_path.name)
-    if file_match:
-        ref_year = int(file_match.group(1))
-
     with pdfplumber.open(pdf_path) as pdf:
+        full_text = "\n".join([p.extract_text() or "" for p in pdf.pages])
+        p_match = PERIOD_REGEX.search(full_text)
+        if not p_match:
+            return records
+
+        d = int(p_match.group("day"))
+        m = parse_month(p_match.group("month"))
+        y = int(p_match.group("year"))
+        stmt_date = date(y, m, d)
+
+        current_account = "COMPTE PRINCIPAL"
+
         for page in pdf.pages:
-            text = page.extract_text() or ""
-            for line in text.split("\n"):
-                line_str = line.strip()
-                if not line_str:
+            words = page.extract_words(x_tolerance=3, y_tolerance=3)
+            if not words:
+                continue
+
+            lines_dict = {}
+            for w in words:
+                top_key = round(w["top"] / 2.5) * 2.5
+                lines_dict.setdefault(top_key, []).append(w)
+
+            sorted_y = sorted(lines_dict.keys())
+            for y_pos in sorted_y:
+                line_words = sorted(lines_dict[y_pos], key=lambda x: x["x0"])
+                line_text = " ".join([w["text"] for w in line_words]).strip()
+
+                if any(line_text.startswith(prefix) for prefix in ACCOUNT_HEADER_PREFIX) and "Date Code" not in line_text:
+                    current_account = clean_account_name(line_text)
                     continue
 
-                if "INTÉRÊT" in line_str.upper() and "CAPITAL" in line_str.upper() and "REMBOURSEMENT" in line_str.upper():
-                    is_loan_table = True
-                    continue
-                elif "RETRAIT" in line_str.upper() and "DÉPÔT" in line_str.upper() and "SOLDE" in line_str.upper():
-                    is_loan_table = False
+                m_prefix = DATE_CODE_PREFIX.match(line_text)
+                if not m_prefix:
                     continue
 
-                if not DATE_PATTERN.match(line_str):
-                    line_upper = line_str.upper()
-                    if any(k in line_upper for k in ["COMPTE PROFIT JEUNESSE", "COMPTE D'OPÉRATIONS COURANTES", "COMPTE D'EPARGNE", "ÉPARGNE", "PRÊT", "PRET", "MARGE"]):
-                        if len(line_str) < 80:
-                            current_section = clean_section_name(line_str)
-                            if any(k in line_upper for k in ["PRÊT", "PRET", "MARGE", "PR"]):
-                                is_loan_table = True
-                    continue
+                day = int(m_prefix.group("day"))
+                month = parse_month(m_prefix.group("month"))
+                year = stmt_date.year - 1 if month > stmt_date.month else stmt_date.year
+                tx_date = date(year, month, day)
+                code = m_prefix.group("code")
 
-                date_match = DATE_PATTERN.match(line_str)
-                raw_date = date_match.group(1)
-                rem = line_str[len(date_match.group(0)):].strip()
+                desc_words = []
+                retrait_val = None
+                depot_val = None
 
-                tokens = rem.split()
-                if len(tokens) < 2:
-                    continue
+                for w in line_words:
+                    x = w["x0"]
+                    txt = w["text"]
+                    is_money = bool(re.match(r"^\d{1,3}(?:[ ,]\d{3})*\.\d{2}$", txt) or re.match(r"^\d+\.\d{2}$", txt))
 
-                amt_val, is_neg_token, raw_desc = extract_amounts_and_clean_desc(tokens)
-                if amt_val is None:
-                    continue
+                    if x < 390:
+                        desc_words.append(txt)
+                    elif 390 <= x < 480 and is_money:
+                        retrait_val = parse_amount(txt)
+                    elif 480 <= x < 540 and is_money:
+                        depot_val = parse_amount(txt)
 
-                code_val, clean_desc = split_code_and_description(raw_desc)
-                clean_desc = re.sub(r"[\$:]", "", clean_desc).strip()
-                iso_date = parse_iso_date(raw_date, ref_year)
+                desc_raw = " ".join(desc_words)
+                desc_clean = DATE_CODE_PREFIX.sub("", desc_raw).strip()
 
-                full_context = f"{code_val} {clean_desc}".upper()
-                
-                if code_val in {"CDT", "COR", "REM", "AJU"} or is_neg_token:
-                    final_amount = abs(amt_val)
+                if retrait_val is not None:
+                    final_amount = -retrait_val
+                elif depot_val is not None:
+                    final_amount = depot_val
                 else:
-                    is_deposit = (
-                        code_val in {"DEP", "CT", "DDI", "SAL", "DIV", "DI", "CCN", "DVW", "INT", "IET", "ICP", "VAE", "VRW", "IVMW", "IVIW", "IVIR"}
-                        or any(k in full_context for k in ["DEPOT", "DÉPÔT", "PAIE", "SALAIRE", "INTERET", "INTÉRÊT", "VIREMENT / DE", "VIREMENT REÇU", "VIREMENT RECU"])
-                    )
-
-                    is_withdrawal = (
-                        code_val in {"ACH", "POS", "APA", "ART", "PAI", "FAC", "TEL", "PWW", "PPW", "PAC", "RA", "PRV", "PRE", "RET", "DT", "RGA", "RGP", "AGA", "AOP", "FAP", "FGD", "FAD", "FCP", "CHQ"}
-                        or any(k in full_context for k in ["ACHAT", "RETRAIT", "FRAIS", "VIREMENT / À", "VIREMENT / A", "PRELEVEMENT", "PRÉLÈVEMENT"])
-                    )
-
-                    if is_withdrawal and amt_val > 0:
-                        final_amount = -amt_val
-                    elif is_deposit and amt_val < 0:
-                        final_amount = abs(amt_val)
-                    else:
-                        final_amount = amt_val
+                    continue
 
                 records.append({
-                    "date": iso_date,
-                    "institution": "Desjardins",
-                    "account_type": "Loan/Credit" if is_loan_table else "Debit/Banking",
-                    "account_section": current_section,
-                    "description": clean_desc,
+                    "date": tx_date,
+                    "statement_date": stmt_date,
+                    "account_section": current_account,
+                    "code": code,
+                    "description": desc_clean,
                     "amount": final_amount,
-                    "code": code_val,
-                    "source_file": pdf_path.name,
+                    "source_file": pdf_path.name
                 })
     return records
 
 
 def main():
-    """Point d'entrée pour l'ingestion des relevés de débit Desjardins."""
-    source_dir = REPO_ROOT.parent / "desjardins_statements"
-    pdf_files = sorted(list(source_dir.glob("*.pdf")))
+    releves_dir = get_target_directory()
+    pdf_files = sorted(releves_dir.glob("*.pdf"))
 
-    all_records = []
-    for pdf_file in pdf_files:
-        records = parse_desjardins_debit(pdf_file)
-        all_records.extend(records)
+    if not pdf_files:
+        print(f"[!] Aucun fichier .pdf trouvé dans {releves_dir}")
+        return
 
-    if not all_records:
-        logger.warning("[!] Aucune transaction de débit trouvée.")
-        sys.exit(0)
+    print(f"\nTraitement et nettoyage des sous-comptes de {len(pdf_files)} fichiers Desjardins...")
 
-    df = pd.DataFrame(all_records)
-    df = df.sort_values(by="date", ascending=False).reset_index(drop=True)
-    df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8")
-    logger.info("[✓] %s transactions exportées dans %s", f"{len(df):,}", OUTPUT_CSV)
+    all_tx = []
+    for f in pdf_files:
+        try:
+            txs = process_statement(f)
+            all_tx.extend(txs)
+        except Exception as e:
+            print(f"[X] Erreur sur {f.name} : {e}")
+
+    df = pd.DataFrame(all_tx)
+    if not df.empty:
+        df.sort_values(by=["date", "statement_date"], inplace=True)
+        df.to_csv(OUTPUT_FILE, index=False, encoding="utf-8")
+        print(f"\n[✓] Succès : {len(df)} transactions débit exportées dans {OUTPUT_FILE}")
+        print("\nAperçu des 10 premières lignes :")
+        print(df.head(10).to_string(index=False))
+    else:
+        print("\n[!] Aucune transaction détectée.")
 
 
 if __name__ == "__main__":
